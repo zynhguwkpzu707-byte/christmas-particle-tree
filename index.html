@@ -823,7 +823,6 @@
     const MEDIAPIPE_BASE = 'mediapipe';
     const IS_GITHUB_PAGES = window.location.hostname.endsWith('github.io');
     const STATIC_CDN_BASE = 'https://cdn.jsdelivr.net/gh/zynhguwkpzu707-byte/christmas-particle-tree@main/';
-    const MEDIAPIPE_CDN_BASE = STATIC_CDN_BASE + 'mediapipe/';
     const $ = (selector) => document.querySelector(selector);
     const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
     const damp = (current, target, lambda, dt) => current + (target - current) * (1 - Math.exp(-lambda * dt));
@@ -2134,14 +2133,9 @@
         throw new Error('手势识别库未加载，请检查网络连接。');
       }
       hands = new window.Hands({
-        locateFile: (file) => {
-          // Keep the dynamically injected JS on the same origin, but stream the
-          // large WASM/data/model files from jsDelivr when deployed on Pages.
-          if (!IS_GITHUB_PAGES || file.endsWith('.js')) {
-            return `${MEDIAPIPE_BASE}/${file}`;
-          }
-          return `${MEDIAPIPE_CDN_BASE}${file}`;
-        }
+        // On GitHub Pages the service worker mirrors this same-origin path to
+        // jsDelivr, so every MediaPipe file stays same-origin from the page.
+        locateFile: (file) => `${MEDIAPIPE_BASE}/${file}`
       });
       hands.setOptions({
         maxNumHands: 1,
