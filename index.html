@@ -284,6 +284,65 @@
     to { transform: scaleY(1); }
   }
 
+  /* ---------- memory photo controls ---------- */
+  .memory-actions {
+    position: fixed;
+    z-index: 12;
+    top: clamp(118px, 14vh, 154px);
+    right: clamp(22px, 4.6vw, 68px);
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 8px;
+    opacity: 0;
+    transform: translateY(-6px);
+    transition: opacity .8s ease, transform .8s ease;
+  }
+  body.is-started .memory-actions { opacity: 1; transform: translateY(0); }
+  .memory-toggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 32px;
+    padding: 0 12px;
+    border: 1px solid rgba(255, 218, 173, 0.18);
+    border-radius: 999px;
+    background: rgba(6, 13, 17, 0.42);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    color: rgba(255, 236, 208, 0.68);
+    font-family: var(--sans);
+    font-size: 9px;
+    letter-spacing: 0.13em;
+    cursor: pointer;
+    transition: color .25s ease, border-color .25s ease, background .25s ease;
+  }
+  .memory-toggle:hover {
+    color: #fff4de;
+    border-color: rgba(255, 210, 150, 0.45);
+    background: rgba(48, 32, 15, 0.48);
+  }
+  .memory-toggle svg { width: 13px; height: 13px; flex: 0 0 13px; }
+  .memory-toggle .memory-count {
+    display: grid;
+    place-items: center;
+    min-width: 17px;
+    height: 17px;
+    padding: 0 4px;
+    border-radius: 999px;
+    background: #ffd28c;
+    color: #2b1607;
+    font-family: var(--mono);
+    font-size: 8px;
+    letter-spacing: 0;
+  }
+  .memory-toggle.is-full { opacity: 0.48; cursor: not-allowed; }
+  .memory-toggle.memory-view {
+    border-color: rgba(255, 204, 126, 0.34);
+    background: rgba(82, 47, 12, 0.44);
+  }
+  .memory-toggle[hidden] { display: none !important; }
+
   /* ---------- orbit telemetry ---------- */
   .telemetry {
     position: fixed;
@@ -668,6 +727,15 @@
       padding: 0 10px;
     }
     .sound-toggle .sound-label { display: none; }
+    .memory-actions {
+      top: 140px;
+      right: 18px;
+    }
+    .memory-toggle {
+      height: 30px;
+      padding: 0 10px;
+    }
+    .memory-toggle .memory-label { display: none; }
     .toast {
       top: auto;
       bottom: calc(max(22px, env(safe-area-inset-bottom)) + 148px);
@@ -744,6 +812,27 @@
     <span class="sound-label">音乐</span>
     <span class="sound-bars" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
   </button>
+
+  <div class="memory-actions" id="memoryActions">
+    <button type="button" class="memory-toggle" id="memoryAddBtn" aria-label="从手机相册添加回忆照片">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <rect x="3.5" y="5" width="17" height="14" rx="2"></rect>
+        <circle cx="9" cy="10" r="1.4"></circle>
+        <path d="m5.5 17 4.2-4.1 3.1 3 2-1.9 3.7 3"></path>
+      </svg>
+      <span class="memory-label">添加回忆</span>
+      <span class="memory-count" id="memoryCount">0</span>
+    </button>
+    <button type="button" class="memory-toggle memory-view" id="memoryViewBtn" aria-label="展开回忆彩带" hidden>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="m12 3 1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3Z"></path>
+        <path d="m18.5 15 .9 2.6L22 18.5l-2.6.9-.9 2.6-.9-2.6-2.6-.9 2.6-.9.9-2.6Z"></path>
+      </svg>
+      <span class="memory-label">回忆彩带</span>
+    </button>
+  </div>
+
+  <input type="file" id="memoryInput" accept="image/*" multiple hidden>
 
   <div class="telemetry" aria-hidden="true">
     <div class="label">ORBIT DISTANCE</div>
@@ -854,6 +943,10 @@
       video: $('#cameraVideo'),
       bgm: $('#bgm'),
       soundToggle: $('#soundToggle'),
+      memoryAddBtn: $('#memoryAddBtn'),
+      memoryViewBtn: $('#memoryViewBtn'),
+      memoryCount: $('#memoryCount'),
+      memoryInput: $('#memoryInput'),
       scene: $('#scene')
     };
 
@@ -915,6 +1008,11 @@
     let starSpin = null;
     let giftShards = [];
     let giftMaterials = [];
+    let giftGroup = null;
+    let memoryDb = null;
+    let memoryBloomUntil = 0;
+    const memoryObjectUrls = [];
+    const MAX_MEMORY_PHOTOS = 16;
     let explode = 0;
     let explodeTarget = 0;
     let toastTimer = 0;
@@ -1075,6 +1173,160 @@
         setStatus('已捕捉手掌 · 转动圣诞树', 'tracking');
       }
       updateGuideState(dolly.mode || 'none', true);
+    }
+
+    function requestMemoryBloom(duration = 7000) {
+      memoryBloomUntil = performance.now() + duration;
+      showToast('回忆彩带已展开 · 转动视角看看正面的照片', 3600);
+    }
+
+    function openMemoryDb() {
+      if (memoryDb) return Promise.resolve(memoryDb);
+      if (!('indexedDB' in window)) return Promise.resolve(null);
+      return new Promise((resolve) => {
+        const request = window.indexedDB.open('christmas-memory-photos', 1);
+        request.onupgradeneeded = () => {
+          if (!request.result.objectStoreNames.contains('photos')) {
+            request.result.createObjectStore('photos', { keyPath: 'id', autoIncrement: true });
+          }
+        };
+        request.onsuccess = () => {
+          memoryDb = request.result;
+          resolve(memoryDb);
+        };
+        request.onerror = () => resolve(null);
+      });
+    }
+
+    async function getStoredMemoryPhotos() {
+      const db = await openMemoryDb();
+      if (!db) return [];
+      return new Promise((resolve) => {
+        const request = db.transaction('photos', 'readonly').objectStore('photos').getAll();
+        request.onsuccess = () => resolve(request.result || []);
+        request.onerror = () => resolve([]);
+      });
+    }
+
+    async function storeMemoryBlob(blob, caption = '') {
+      const db = await openMemoryDb();
+      if (!db) return;
+      await new Promise((resolve) => {
+        const tx = db.transaction('photos', 'readwrite');
+        tx.objectStore('photos').add({ blob, caption, createdAt: Date.now() });
+        tx.oncomplete = resolve;
+        tx.onerror = resolve;
+      });
+    }
+
+    async function prepareMemoryImage(file) {
+      let bitmap = null;
+      try {
+        bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
+      } catch (error) {
+        bitmap = null;
+      }
+
+      if (!bitmap) {
+        const url = URL.createObjectURL(file);
+        const image = await new Promise((resolve) => {
+          const element = new Image();
+          element.onload = () => resolve(element);
+          element.onerror = () => resolve(null);
+          element.src = url;
+        });
+        URL.revokeObjectURL(url);
+        if (!image) throw new Error('无法读取图片');
+        bitmap = image;
+      }
+
+      const maxSide = 1400;
+      const scale = Math.min(1, maxSide / Math.max(bitmap.width, bitmap.height));
+      const width = Math.max(1, Math.round(bitmap.width * scale));
+      const height = Math.max(1, Math.round(bitmap.height * scale));
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const context = canvas.getContext('2d');
+      context.drawImage(bitmap, 0, 0, width, height);
+      if (typeof bitmap.close === 'function') bitmap.close();
+      const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.86));
+      return blob || file;
+    }
+
+    async function addMemoryFiles(fileList) {
+      const files = Array.from(fileList || []).filter((file) => file.type.startsWith('image/'));
+      if (!files.length) return;
+      const remaining = MAX_MEMORY_PHOTOS - memoryRibbonCount();
+      if (remaining <= 0) {
+        showToast('最多保存 16 张回忆照片');
+        return;
+      }
+
+      let added = 0;
+      for (const file of files.slice(0, remaining)) {
+        try {
+          const blob = await prepareMemoryImage(file);
+          const url = URL.createObjectURL(blob);
+          memoryObjectUrls.push(url);
+          if (addMemoryRibbon({ src: url })) {
+            await storeMemoryBlob(blob);
+            added += 1;
+          } else {
+            URL.revokeObjectURL(url);
+            memoryObjectUrls.pop();
+          }
+        } catch (error) {
+          console.warn('Memory photo failed:', file.name, error);
+        }
+      }
+
+      updateMemoryUI();
+      if (added > 0) {
+        requestMemoryBloom(8500);
+      } else {
+        showToast('这些照片暂时无法读取，请换一张 JPG / PNG 试试');
+      }
+    }
+
+    async function restoreStoredMemoryPhotos() {
+      const records = await getStoredMemoryPhotos();
+      for (const record of records) {
+        if (!record || !record.blob) continue;
+        if (memoryRibbonCount() >= MAX_MEMORY_PHOTOS) break;
+        const url = URL.createObjectURL(record.blob);
+        memoryObjectUrls.push(url);
+        if (!addMemoryRibbon({ src: url, caption: record.caption || '' })) {
+          URL.revokeObjectURL(url);
+          memoryObjectUrls.pop();
+        }
+      }
+      updateMemoryUI();
+    }
+
+    function delay(ms) {
+      return new Promise((resolve) => window.setTimeout(resolve, ms));
+    }
+
+    async function warmMediaPipeAssets() {
+      if (!IS_GITHUB_PAGES || !('serviceWorker' in navigator)) return;
+      await Promise.race([swReady, delay(3000)]);
+      if (!navigator.serviceWorker.controller) return;
+      const files = [
+        'hands_solution_packed_assets_loader.js',
+        'hands_solution_simd_wasm_bin.js',
+        'hands.binarypb',
+        'hand_landmark_lite.tflite',
+        'hands_solution_packed_assets.data',
+        'hands_solution_simd_wasm_bin.wasm'
+      ];
+      for (const file of files) {
+        try {
+          await fetch(`${MEDIAPIPE_BASE}/${file}`, { cache: 'force-cache' });
+        } catch (error) {
+          // The actual initialization still has its normal fallback path.
+        }
+      }
     }
 
     // ---------------------------------------------------------------------
@@ -1585,6 +1837,7 @@
 
     function createGiftShards() {
       const group = new THREE.Group();
+      giftGroup = group;
       giftShards = [];
       giftMaterials = [
         new THREE.MeshBasicMaterial({ color: 0xffc857, side: THREE.DoubleSide, transparent: true, opacity: 0, depthWrite: false }),
@@ -1721,6 +1974,92 @@
 
       group.renderOrder = 3;
       return group;
+    }
+
+    function memoryRibbonCount() {
+      return giftShards.reduce((count, shard) => count + (shard.isMemory ? 1 : 0), 0);
+    }
+
+    function updateMemoryUI() {
+      const count = memoryRibbonCount();
+      if (ui.memoryCount) ui.memoryCount.textContent = String(count);
+      if (ui.memoryViewBtn) ui.memoryViewBtn.hidden = count === 0;
+      if (ui.memoryAddBtn) {
+        ui.memoryAddBtn.disabled = count >= MAX_MEMORY_PHOTOS;
+        ui.memoryAddBtn.classList.toggle('is-full', count >= MAX_MEMORY_PHOTOS);
+      }
+    }
+
+    function addMemoryRibbon(entry) {
+      if (!giftGroup || !entry || !entry.src) return false;
+      if (memoryRibbonCount() >= MAX_MEMORY_PHOTOS) return false;
+
+      const texture = createMemoryTexture(entry);
+      const frontMaterial = new THREE.MeshBasicMaterial({
+        map: texture,
+        side: THREE.FrontSide,
+        transparent: true,
+        opacity: 0,
+        depthWrite: false
+      });
+      const backMaterial = new THREE.MeshBasicMaterial({
+        color: 0xe0ad4b,
+        side: THREE.BackSide,
+        transparent: true,
+        opacity: 0,
+        depthWrite: false
+      });
+      giftMaterials.push(frontMaterial, backMaterial);
+
+      const ribbonGeometry = new THREE.PlaneGeometry(0.3, 0.44);
+      const ribbon = new THREE.Group();
+      const front = new THREE.Mesh(ribbonGeometry, frontMaterial);
+      const back = new THREE.Mesh(ribbonGeometry, backMaterial);
+      front.position.z = 0.003;
+      back.position.z = -0.003;
+      front.frustumCulled = false;
+      back.frustumCulled = false;
+      ribbon.add(front, back);
+      ribbon.visible = false;
+      ribbon.renderOrder = 3;
+
+      const y = -1.8 + Math.random() * 3.55;
+      const maxRadius = Math.max(0.1, 1.64 * (1 - (y + 2.2) / 4.4));
+      const radius = maxRadius * (0.62 + Math.random() * 0.34);
+      const theta = Math.random() * TAU;
+      const base = new THREE.Vector3(
+        Math.cos(theta) * radius,
+        y,
+        Math.sin(theta) * radius
+      );
+      const burst = new THREE.Vector3(
+        Math.cos(theta) * (1.45 + Math.random() * 0.6) + (Math.random() - 0.5) * 1.0,
+        (Math.random() - 0.35) * 2.0,
+        Math.sin(theta) * (1.45 + Math.random() * 0.6) + (Math.random() - 0.5) * 1.0
+      );
+      const baseRotation = {
+        x: (Math.random() - 0.5) * 0.24,
+        y: (orbit.azimuth - (treeSpin ? treeSpin.rotation.y : 0)) + (Math.random() - 0.5) * 0.42,
+        z: (Math.random() - 0.5) * 0.18
+      };
+      ribbon.position.copy(base);
+      ribbon.rotation.set(baseRotation.x, baseRotation.y, baseRotation.z);
+      giftGroup.add(ribbon);
+
+      giftShards.push({
+        mesh: ribbon,
+        base,
+        burst,
+        baseRotation,
+        axis: new THREE.Vector3(0, 1, 0),
+        spin: (Math.random() - 0.5) * 0.9,
+        scale: 0.9 + Math.random() * 0.24,
+        phase: Math.random() * TAU,
+        isMemory: true
+      });
+
+      updateMemoryUI();
+      return true;
     }
 
 
@@ -1934,7 +2273,9 @@
     }
 
     function updateTreeState(dt) {
-      explodeTarget = 1 - smoothstep(5.36, 6.58, orbit.radius);
+      const proximityExplode = 1 - smoothstep(5.36, 6.58, orbit.radius);
+      const memoryPreview = performance.now() < memoryBloomUntil ? 1 : 0;
+      explodeTarget = Math.max(proximityExplode, memoryPreview);
       explode = damp(explode, explodeTarget, 3.2, dt);
       if (Math.abs(explode - explodeTarget) < 0.0004) explode = explodeTarget;
 
@@ -2335,6 +2676,13 @@
 
       ui.startBtn.addEventListener('click', startExperience);
       ui.mouseBtn.addEventListener('click', () => startExploreMode());
+      ui.memoryAddBtn.addEventListener('click', () => ui.memoryInput.click());
+      ui.memoryViewBtn.addEventListener('click', () => requestMemoryBloom(9000));
+      ui.memoryInput.addEventListener('change', async () => {
+        const files = ui.memoryInput.files;
+        ui.memoryInput.value = '';
+        await addMemoryFiles(files);
+      });
       ui.soundToggle.addEventListener('click', toggleBgm);
       bgm.addEventListener('play', updateSoundToggle);
       bgm.addEventListener('pause', updateSoundToggle);
@@ -2389,6 +2737,9 @@
 
       bindInteractions();
       updateCamera(0.016);
+      updateMemoryUI();
+      restoreStoredMemoryPhotos();
+      window.setTimeout(warmMediaPipeAssets, 700);
 
       // If the module finished after the slow-network fallback appeared,
       // restore the welcome card so the experience is still usable.
@@ -2442,6 +2793,9 @@
       feedHand(landmarks) {
         if (!Array.isArray(landmarks) || landmarks.length < 21) return;
         onHandResults({ multiHandLandmarks: [landmarks] });
+      },
+      addPhoto(file) {
+        return addMemoryFiles([file]);
       },
       getState() {
         return {
