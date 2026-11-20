@@ -821,6 +821,9 @@
     'use strict';
 
     const MEDIAPIPE_BASE = 'mediapipe';
+    const IS_GITHUB_PAGES = window.location.hostname.endsWith('github.io');
+    const STATIC_CDN_BASE = 'https://cdn.jsdelivr.net/gh/zynhguwkpzu707-byte/christmas-particle-tree@main/';
+    const MEDIAPIPE_CDN_BASE = STATIC_CDN_BASE + 'mediapipe/';
     const $ = (selector) => document.querySelector(selector);
     const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
     const damp = (current, target, lambda, dt) => current + (target - current) * (1 - Math.exp(-lambda * dt));
@@ -932,6 +935,10 @@
     let bgmTargetVolume = 0.4;
     const treeFocus = new THREE.Vector3(0, 0.08, 0);
     bgm = ui.bgm;
+    if (IS_GITHUB_PAGES) {
+      bgm.src = STATIC_CDN_BASE + 'audio/last-christmas.mp3';
+      bgm.load();
+    }
 
     // ---------------------------------------------------------------------
     // Small UI helpers
@@ -1567,7 +1574,11 @@
       image.onerror = () => {
         console.warn('Memory photo could not be loaded:', entry.src);
       };
-      if (entry.src) image.src = entry.src;
+      if (entry.src) {
+        image.src = IS_GITHUB_PAGES && entry.src.startsWith('photos/')
+          ? STATIC_CDN_BASE + entry.src
+          : entry.src;
+      }
       texture.needsUpdate = true;
       return texture;
     }
@@ -2122,7 +2133,14 @@
         throw new Error('手势识别库未加载，请检查网络连接。');
       }
       hands = new window.Hands({
-        locateFile: (file) => `${MEDIAPIPE_BASE}/${file}`
+        locateFile: (file) => {
+          // Keep the dynamically injected JS on the same origin, but stream the
+          // large WASM/data/model files from jsDelivr when deployed on Pages.
+          if (!IS_GITHUB_PAGES || file.endsWith('.js')) {
+            return `${MEDIAPIPE_BASE}/${file}`;
+          }
+          return `${MEDIAPIPE_CDN_BASE}${file}`;
+        }
       });
       hands.setOptions({
         maxNumHands: 1,
