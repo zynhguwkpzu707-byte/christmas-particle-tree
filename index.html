@@ -799,7 +799,7 @@
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
   <video id="cameraVideo" playsinline muted aria-hidden="true"></video>
-  <audio id="bgm" src="audio/last-christmas.mp3" loop preload="auto"></audio>
+  <audio id="bgm" loop preload="none"></audio>
 
   <!-- MediaPipe is loaded with a classic script and exposed as the global `Hands`.
        The runtime files live in ./mediapipe so the tracker starts instantly and
@@ -933,12 +933,13 @@
     let bgmStarted = false;
     let bgmMuted = false;
     let bgmTargetVolume = 0.4;
+    let swReady = Promise.resolve();
     const treeFocus = new THREE.Vector3(0, 0.08, 0);
     bgm = ui.bgm;
-    if (IS_GITHUB_PAGES) {
-      bgm.src = STATIC_CDN_BASE + 'audio/last-christmas.mp3';
-      bgm.load();
-    }
+    bgm.src = IS_GITHUB_PAGES
+      ? STATIC_CDN_BASE + 'audio/last-christmas.mp3'
+      : 'audio/last-christmas.mp3';
+    bgm.load();
 
     // ---------------------------------------------------------------------
     // Small UI helpers
@@ -2228,6 +2229,13 @@
         ui.video.srcObject = stream;
         await ui.video.play();
 
+        if (IS_GITHUB_PAGES) {
+          await Promise.race([swReady, new Promise((resolve) => window.setTimeout(resolve, 2600))]);
+          if (!navigator.serviceWorker || !navigator.serviceWorker.controller) {
+            await new Promise((resolve) => window.setTimeout(resolve, 400));
+          }
+        }
+
         await initHands();
 
         state.cameraActive = true;
@@ -2409,6 +2417,14 @@
       }
 
       animate();
+    }
+
+    if (IS_GITHUB_PAGES && 'serviceWorker' in navigator) {
+      swReady = navigator.serviceWorker.register('sw.js')
+        .then(() => navigator.serviceWorker.ready)
+        .catch((error) => {
+          console.warn('Service worker unavailable; using local MediaPipe assets.', error);
+        });
     }
 
     boot();
